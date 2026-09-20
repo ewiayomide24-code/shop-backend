@@ -1,0 +1,158 @@
+{
+  "users": [
+    {
+      "id": "9bd95f67-ec3f-48a4-b70d-e968f3405986",
+      "name": "Administrator",
+      "email": "ewiayomide24@gmail.com",
+      "passwordHash": "$2b$12$V0pVjULJ5yewgJyXLm.LBO8TqIGuYoxG4VGtmsoJY1KtmK8p8hwvu",
+      "role": "admin",
+      "createdAt": "2026-09-18T10:30:39.348Z",
+      "updatedAt": "2026-09-18T10:30:39.349Z"
+    },
+    {
+      "id": "76d40dbe-68e2-41a2-8053-895adb5a4f18",
+      "name": "Test Buyer",
+      "email": "buyer@example.com",
+      "passwordHash": "$2b$12$K69DEs4C89Ua/Bp8PtAtx.wzX5QWeHCb3iL2Pe9goM5uihQjrbeQq",
+      "role": "customer",
+      "createdAt": "2026-09-18T10:44:06.363Z",
+      "updatedAt": "2026-09-18T10:44:06.363Z"
+    },
+    {
+      "id": "621efd62-ee8d-46d9-99d5-676a24a2d0d9",
+      "name": "Dup Test",
+      "email": "dup@example.com",
+      "passwordHash": "$2b$12$90bg/06UEPH/auJ41.eDlefCkkXD2gg94gefREtkPrav.le4sT1xK",
+      "role": "customer",
+      "createdAt": "2026-09-18T10:47:59.870Z",
+      "updatedAt": "2026-09-18T10:47:59.870Z"
+    }
+  ],
+  "products": [
+    {
+      "id": "8f4787af-0100-4d11-b262-67333d61038b",
+      "name": "Wireless Mouse",
+      "description": "Bluetooth mouse",
+      "price": 19.99,
+      "category": "Electronics",
+      "stock": 48,
+      "images": [],
+      "active": true,
+      "createdAt": "2026-09-18T10:39:30.286Z",
+      "updatedAt": "2026-09-18T10:39:30.286Z"
+    }
+  ],
+  "carts": {},
+  "orders": [
+    {
+      "id": "b9244148-6bc3-45a7-8de8-0f9c75a869f1",
+      "userId": "76d40dbe-68e2-41a2-8053-895adb5a4f18",
+      "items": [
+        {
+          "productId": "8f4787af-0100-4d11-b262-67333d61038b",
+          "name": "Wireless Mouse",
+          "price": 19.99,
+          "quantity": 2
+        }
+      ],
+      "total": 39.98,
+      "shippingAddress": {
+        "line1": "1 Allen Ave",
+        "city": "Ikeja",
+        "postalCode": "100281",
+        "country": "Nigeria"
+      },
+      "status": "cancelled",
+      "createdAt": "2026-09-18T10:45:23.075Z",
+      "updatedAt": "2026-09-18T10:46:33.294Z"
+    },
+    {
+      "id": "2544e7fc-640f-4c8e-9322-3f7d45e4e0fb",
+      "userId": "76d40dbe-68e2-41a2-8053-895adb5a4f18",
+      "items": [
+        {
+          "productId": "8f4787af-0100-4d11-b262-67333d61038b",
+          "name": "Wireless Mouse",
+          "price": 19.99,
+          "quantity": 1
+        }
+      ],
+      "subtotal": 19.99,
+      "couponCode": "SAVE20",
+      "discount": 4,
+      "total": 15.99,
+      "shippingAddress": {
+        "line1": "1 Allen Ave",
+        "city": "Ikeja",
+        "postalCode": "100281",
+        "country": "Nigeria"
+      },
+      "status": "pending",
+      "createdAt": "2026-09-18T11:13:02.004Z",
+      "updatedAt": "2026-09-18T11:13:02.004Z"
+    },
+    {
+      "id": "efbe9e03-e1cf-40cf-99cc-9e55fbf7002a",
+      "userId": "76d40dbe-68e2-41a2-8053-895adb5a4f18",
+      "items": [
+        {
+          "productId": "8f4787af-0100-4d11-b262-67333d61038b",
+          "name": "Wireless Mouse",
+          "price": 19.99,
+          "quantity": 1
+        }
+      ],
+      "subtotal": 19.99,
+      "couponCode": null,
+      "discount": 0,
+      "total": 19.99,
+      "shippingAddress": {
+        "line1": "1 Allen Ave",
+        "city": "Ikeja",
+        "postalCode": "100281",
+        "country": "Nigeria"
+      },
+      "status": "pending",
+      "paymentStatus": "paid",
+      "stripeSessionId": "cs_test_a1bT8iw8Twmig8epPcpyuyCNqk2aVB1xkTjsu28nfQMkqEgI3l2ooe86b7",
+      "createdAt": "2026-09-18T11:38:34.919Z",
+      "updatedAt": "2026-09-18T11:50:01.049Z"
+    }
+  ],
+  "categories": [
+    {
+      "id": "21e060c0-9ea5-4d73-9a4f-4a2d98a0bb63",
+      "name": "Electronics",
+      "active": true,
+      "createdAt": "2026-09-18T10:39:30.271Z",
+      "updatedAt": "2026-09-18T10:39:30.271Z"
+    }
+  ],
+  "reviews": [
+    {
+      "id": "4153b5fb-d10f-47e6-a6b5-cc5c076c8bf6",
+      "productId": "8f4787af-0100-4d11-b262-67333d61038b",
+      "userId": "76d40dbe-68e2-41a2-8053-895adb5a4f18",
+      "userName": "Test Buyer",
+      "rating": 5,
+      "comment": "Great mouse, very responsive",
+      "createdAt": "2026-09-18T11:08:44.822Z",
+      "updatedAt": "2026-09-18T11:08:44.822Z"
+    }
+  ],
+  "wishlists": {
+    "76d40dbe-68e2-41a2-8053-895adb5a4f18": []
+  },
+  "coupons": [
+    {
+      "id": "7874dad3-8f7b-4af1-8723-f404f06a4424",
+      "code": "SAVE20",
+      "type": "percent",
+      "value": 20,
+      "expiresAt": null,
+      "active": true,
+      "createdAt": "2026-09-18T11:13:01.973Z",
+      "updatedAt": "2026-09-18T11:13:01.973Z"
+    }
+  ]
+}
