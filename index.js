@@ -11,6 +11,8 @@ const crypto = require("crypto");
 const Stripe = require("stripe");
 const { Resend } = require("resend");
 const { Pool } = require("pg");
+const multer = require("multer");
+const { v2: cloudinary } = require("cloudinary");
 
 const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -23,6 +25,18 @@ if (!process.env.DATABASE_URL) {
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+const cloudinaryConfigured = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+if (cloudinaryConfigured) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+}
+// Keep uploads in memory (not on disk) — Render's free tier disk isn't
+// durable across deploys anyway, so we stream straight to Cloudinary.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 // Resend's free tier requires this exact sender address until you verify
 // your own domain with them — real "from your store" addresses come later.
 const FROM_EMAIL = process.env.FROM_EMAIL || "onboarding@resend.dev";
@@ -516,6 +530,34 @@ app.delete("/api/categories/:categoryId", authenticate, adminOnly, async (req, r
     const result = await pool.query("UPDATE categories SET active = false, updated_at = now() WHERE id = $1 RETURNING id", [req.params.categoryId]);
     if (!result.rows[0]) return res.status(404).json({ error: "Category not found" });
     res.status(204).send();
+  } catch (error) { next(error); }
+});
+
+// --- Image upload (admin) ---------------------------------------------------
+
+// Streams an in-memory file buffer to Cloudinary without ever writing it to
+// disk — needed since Render's free tier disk doesn't persist across deploys.
+function uploadBufferToCloudinary(buffer) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "shop-backend", resource_type: "image" },
+      (error, result) => (error ? reject(error) : resolve(result))
+    );
+    stream.end(buffer);
+  });
+}
+
+app.post("/api/admin/upload-image", authenticate, adminOnly, upload.single("image"), async (req, res, next) => {
+  try {
+    if (!cloudinaryConfigured) {
+      return res.status(500).json({ error: "Image uploads are not configured on this server (missing Cloudinary credentials)" });
+    }
+    if (!req.file) return res.status(400).json({ error: "No image file was provided (use field name 'image')" });
+    if (!req.file.mimetype.startsWith("image/")) {
+      return res.status(400).json({ error: "Uploaded file must be an image" });
+    }
+    const result = await uploadBufferToCloudinary(req.file.buffer);
+    res.status(201).json({ url: result.secure_url });
   } catch (error) { next(error); }
 });
 
