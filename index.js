@@ -997,15 +997,43 @@ app.post("/api/orders", authenticate, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Always the logged-in user's OWN orders, regardless of role. Used by the
+// plain customer-facing "Orders" screen — unlike GET /api/orders below,
+// this never widens to "everyone's orders" just because the caller is an
+// admin, so an admin account browsing their own purchase history doesn't
+// accidentally see every customer's orders mixed in.
+app.get("/api/orders/me", authenticate, async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const result = await pool.query(
+      "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC",
+      [req.user.id]
+    );
+    const { data, pagination } = paginate(result.rows, { page, limit });
+    const withItems = [];
+    for (const row of data) withItems.push(mapOrder(row, await getOrderItems(row.id)));
+    res.json({ data: withItems, pagination });
+  } catch (error) { next(error); }
+});
+
 app.get("/api/orders", authenticate, async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, status } = req.query;
+    const { page = 1, limit = 20, status, sortBy = "newest" } = req.query;
     const conditions = [];
     const values = [];
     if (req.user.role !== "admin") { values.push(req.user.id); conditions.push(`user_id = $${values.length}`); }
     if (status) { values.push(status); conditions.push(`status = $${values.length}`); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const result = await pool.query(`SELECT * FROM orders ${where} ORDER BY created_at DESC`, values);
+
+    const sortOptions = {
+      newest: "created_at DESC",
+      oldest: "created_at ASC",
+      "total-desc": "total DESC",
+      "total-asc": "total ASC"
+    };
+    const orderClause = sortOptions[sortBy] || sortOptions.newest;
+
+    const result = await pool.query(`SELECT * FROM orders ${where} ORDER BY ${orderClause}`, values);
     const { data, pagination } = paginate(result.rows, { page, limit });
     const withItems = [];
     for (const row of data) withItems.push(mapOrder(row, await getOrderItems(row.id)));
