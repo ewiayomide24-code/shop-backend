@@ -41,6 +41,14 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 // your own domain with them — real "from your store" addresses come later.
 const FROM_EMAIL = process.env.FROM_EMAIL || "onboarding@resend.dev";
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+// Where customers land after paying. This MUST be your frontend's URL (the
+// React app), not the backend — otherwise Stripe redirects people to a
+// bare backend response instead of your actual confirmation page.
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+
+if (!process.env.STRIPE_WEBHOOK_SECRET && stripe) {
+  console.warn("STRIPE_WEBHOOK_SECRET is not set — the /api/webhook route will reject all events until it is.");
+}
 
 // Fire-and-forget email helper. Never throws — a broken email provider
 // should never take down an order or a password reset; we just log it.
@@ -314,6 +322,28 @@ async function sendOrderConfirmation(user, order) {
   });
 }
 
+// Marks an order as paid, idempotently (safe to call more than once for the
+// same order — e.g. if both the webhook and a status-check endpoint fire).
+// Used by the Stripe webhook below.
+async function markOrderPaid(orderId) {
+  const orderResult = await pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
+  const order = orderResult.rows[0];
+  if (!order) {
+    console.error(`Webhook: no order found for id ${orderId}`);
+    return;
+  }
+  if (order.payment_status === "paid") return; // already processed, nothing to do
+  await pool.query(
+    "UPDATE orders SET payment_status = 'paid', status = 'pending', updated_at = now() WHERE id = $1",
+    [orderId]
+  );
+  const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [order.user_id]);
+  if (userResult.rows[0]) {
+    const items = await getOrderItems(orderId);
+    await sendOrderConfirmation(userResult.rows[0], mapOrder({ ...order, payment_status: "paid", status: "pending" }, items));
+  }
+}
+
 async function seedAdmin() {
   if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) return;
   const email = process.env.ADMIN_EMAIL.toLowerCase().trim();
@@ -328,6 +358,47 @@ async function seedAdmin() {
 
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",") : true }));
+
+// --- Stripe webhook ------------------------------------------------------------
+// IMPORTANT: this route is registered BEFORE express.json() below, and uses
+// express.raw() instead, because Stripe's signature verification needs the
+// exact raw request body bytes. If this route were registered after
+// express.json() (or without express.raw()), the signature check would
+// always fail with a 400, even with the correct secret.
+app.post("/api/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  if (!stripe) return res.status(500).send("Stripe is not configured on this server");
+  if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(500).send("STRIPE_WEBHOOK_SECRET is not configured");
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, req.get("stripe-signature"), process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (error) {
+    console.error("Webhook signature verification failed:", error.message);
+    return res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+
+  try {
+    if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+      const session = event.data.object;
+      // We stash the order id as session metadata when creating the
+      // Checkout Session (see /api/checkout below), so we can find it here
+      // without trusting anything else in the payload.
+      const orderId = session.metadata && session.metadata.orderId;
+      if (orderId) {
+        await markOrderPaid(orderId);
+      } else {
+        console.error("Webhook: checkout.session.completed with no orderId in metadata", session.id);
+      }
+    }
+    // Acknowledge receipt so Stripe doesn't keep retrying. Any event type we
+    // don't explicitly handle is still a 200 — we just ignore it.
+    res.json({ received: true });
+  } catch (error) {
+    console.error("Error handling webhook event:", error);
+    res.status(500).send("Webhook handler failed");
+  }
+});
+
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("combined"));
 
@@ -445,11 +516,11 @@ app.post("/api/auth/forgot-password", authLimiter, async (req, res, next) => {
       [tokenHash, expires, user.id]
     );
 
-    const resetLink = `${BASE_URL}/api/auth/reset-password?token=${rawToken}`;
+    const resetLink = `${FRONTEND_URL}/?reset=${rawToken}`;
     await sendEmail({
       to: user.email,
       subject: "Reset your password",
-      html: `<p>Hi ${user.name},</p><p>Use the token below to reset your password (valid for 30 minutes):</p><p><strong>${rawToken}</strong></p><p>Or open this link if you have a frontend wired up to handle it: ${resetLink}</p>`
+      html: `<p>Hi ${user.name},</p><p>Click below to reset your password (valid for 30 minutes):</p><p><a href="${resetLink}">${resetLink}</a></p>`
     });
 
     res.json(genericResponse);
@@ -477,6 +548,21 @@ app.post("/api/auth/reset-password", authLimiter, async (req, res, next) => {
       [passwordHash, user.id]
     );
     res.json({ message: "Password has been reset successfully. You can now log in with your new password." });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/auth/change-password", authenticate, authLimiter, async (req, res, next) => {
+  try {
+    const missing = requireFields(req.body, ["currentPassword", "newPassword"]);
+    if (missing.length) return res.status(400).json({ error: `Missing fields: ${missing.join(", ")}` });
+    if (typeof req.body.newPassword !== "string" || req.body.newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must contain at least 8 characters" });
+    }
+    const ok = await bcrypt.compare(req.body.currentPassword, req.user.password_hash);
+    if (!ok) return res.status(401).json({ error: "Current password is incorrect" });
+    const passwordHash = await bcrypt.hash(req.body.newPassword, 12);
+    await pool.query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", [passwordHash, req.user.id]);
+    res.json({ message: "Password changed successfully." });
   } catch (error) { next(error); }
 });
 
@@ -892,6 +978,14 @@ app.patch("/api/coupons/:couponId", authenticate, adminOnly, async (req, res, ne
   } catch (error) { next(error); }
 });
 
+app.delete("/api/coupons/:couponId", authenticate, adminOnly, async (req, res, next) => {
+  try {
+    const result = await pool.query("DELETE FROM coupons WHERE id = $1 RETURNING id", [req.params.couponId]);
+    if (!result.rows[0]) return res.status(404).json({ error: "Coupon not found" });
+    res.status(204).send();
+  } catch (error) { next(error); }
+});
+
 // --- Orders ------------------------------------------------------------------
 
 app.post("/api/orders", authenticate, async (req, res, next) => {
@@ -985,8 +1079,14 @@ app.post("/api/checkout", authenticate, requireStripe, async (req, res, next) =>
         },
         quantity: 1
       }],
-      success_url: `${BASE_URL}/api/checkout/complete?orderId=${order.id}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${BASE_URL}/api/checkout/complete?orderId=${order.id}&cancelled=true`
+      // Stashing the orderId here lets the webhook below find and mark the
+      // right order paid, without trusting anything from the client.
+      metadata: { orderId: order.id },
+      // These send the customer back to the FRONTEND (your React app), so
+      // they see the actual confirmation/cancelled screens, not a bare
+      // backend response. The frontend reads ?checkout=success|cancelled.
+      success_url: `${FRONTEND_URL}/?checkout=success`,
+      cancel_url: `${FRONTEND_URL}/?checkout=cancelled`
     });
 
     await pool.query("UPDATE orders SET stripe_session_id = $1, updated_at = now() WHERE id = $2", [session.id, order.id]);
@@ -994,39 +1094,10 @@ app.post("/api/checkout", authenticate, requireStripe, async (req, res, next) =>
   } catch (error) { next(error); }
 });
 
-app.get("/api/checkout/complete", async (req, res, next) => {
-  try {
-    const { orderId, session_id, cancelled } = req.query;
-    const orderResult = await pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
-    const order = orderResult.rows[0];
-    if (!order) return res.status(404).send("Order not found.");
-
-    if (cancelled === "true") {
-      if (order.status === "awaiting_payment") {
-        await restockOrder(order.id);
-        await pool.query("UPDATE orders SET status = 'cancelled', updated_at = now() WHERE id = $1", [order.id]);
-      }
-      return res.send("Checkout was cancelled. You can close this tab.");
-    }
-
-    if (!stripe || !session_id) return res.status(400).send("Missing payment session.");
-    const session = await stripe.checkout.sessions.retrieve(session_id);
-
-    if (session.payment_status === "paid") {
-      if (order.payment_status !== "paid") {
-        await pool.query("UPDATE orders SET payment_status = 'paid', status = 'pending', updated_at = now() WHERE id = $1", [order.id]);
-        const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [order.user_id]);
-        if (userResult.rows[0]) {
-          const items = await getOrderItems(order.id);
-          sendOrderConfirmation(userResult.rows[0], mapOrder({ ...order, payment_status: "paid", status: "pending" }, items));
-        }
-      }
-      return res.send(`Payment successful for order ${order.id}. You can close this tab.`);
-    }
-    return res.send(`Payment not completed yet (status: ${session.payment_status}). You can close this tab.`);
-  } catch (error) { next(error); }
-});
-
+// Kept as a manual/fallback check — the webhook above is now the primary way
+// orders get marked paid, so this being hit or not no longer matters for
+// correctness. Still useful if you ever want to double check a specific
+// order's payment status directly against Stripe.
 app.get("/api/checkout/:orderId/status", authenticate, requireStripe, async (req, res, next) => {
   try {
     const orderResult = await pool.query("SELECT * FROM orders WHERE id = $1", [req.params.orderId]);
@@ -1037,7 +1108,7 @@ app.get("/api/checkout/:orderId/status", authenticate, requireStripe, async (req
     if (!order.stripe_session_id) return res.status(400).json({ error: "This order has no associated payment session" });
     const session = await stripe.checkout.sessions.retrieve(order.stripe_session_id);
     if (session.payment_status === "paid" && order.payment_status !== "paid") {
-      await pool.query("UPDATE orders SET payment_status = 'paid', status = 'pending', updated_at = now() WHERE id = $1", [order.id]);
+      await markOrderPaid(order.id);
     }
     const finalResult = await pool.query("SELECT * FROM orders WHERE id = $1", [order.id]);
     res.json({ order: mapOrder(finalResult.rows[0], await getOrderItems(order.id)), stripePaymentStatus: session.payment_status });
