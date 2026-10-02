@@ -81,6 +81,10 @@ pool.on("error", (error) => {
 });
 
 const app = express();
+// Render sits in front of your app behind a proxy, so Express needs to be
+// told to trust the X-Forwarded-For header it sets. Without this, the rate
+// limiter below can't reliably tell users apart by IP.
+app.set("trust proxy", 1);
 const now = () => new Date().toISOString();
 
 // --- Row -> API shape mappers (snake_case DB columns -> camelCase JSON) ------
